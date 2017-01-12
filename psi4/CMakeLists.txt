@@ -111,9 +111,8 @@ else()
 endif ()
 
 if(NOT(${ENABLE_SIMINT} STREQUAL "None"))
-    find_package(simint CONFIG REQUIRED
-                      HINTS ${CMAKE_PREFIX_PATH})
-    message(STATUS "Found simint: ${loc}")
+    find_package(simint CONFIG REQUIRED)
+    message(STATUS "Found simint: ${simint_DIR}")
 endif()
 
 if(APPLE)
