@@ -192,7 +192,7 @@ ExternalProject_Add(psi4-core
               -DENABLE_CheMPS2=${ENABLE_CheMPS2}
               -DENABLE_dkh=${ENABLE_dkh}
               -DENABLE_erd=${ENABLE_erd}
-              -DENABLE_SIMINT=${ENABLE_SIMINT}
+              -DENABLE_simint=${ENABLE_simint}
               -DENABLE_gdma=${ENABLE_gdma}
               -DENABLE_PCMSolver=${ENABLE_PCMSolver}
               -DTargetLAPACK_DIR=${TargetLAPACK_DIR}
