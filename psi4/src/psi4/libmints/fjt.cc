@@ -57,14 +57,18 @@
 #include "fjt.h"
 #include "wavefunction.h"
 #include "integralparameters.h"
-#include "psi4/libciomr/libciomr.h"
 #include "psi4/psi4-dec.h"
 using namespace psi;
 using namespace std;
-;
 
-const double oon[] = {0.0, 1.0, 1.0/2.0, 1.0/3.0, 1.0/4.0, 1.0/5.0, 1.0/6.0, 1.0/7.0, 1.0/8.0, 1.0/9.0, 1.0/10.0, 1.0/11.0};
 
+// Static variables of the Split_Fjt class
+std::unique_ptr<double[]> psi::Split_Fjt::grid_;
+int psi::Split_Fjt::max_T_ = 0;
+double psi::Split_Fjt::max_Tval_ = 0.0;
+int psi::Split_Fjt::max_J_ = 0;
+int psi::Split_Fjt::nrow_ = 0;
+int psi::Split_Fjt::ncol_ = 0;
 
 // calculates a value of the boys function. Slow, but accurate
 // n = J in other code
@@ -117,45 +121,36 @@ Split_Fjt::Split_Fjt(unsigned int maxJ)
 {
     // If we have a grid, it is big enough?
     // If not, free it
-	/*
-    if(initialized_ && max_m_ < mmax)
-    {
-        free_block(grid_);
-        grid_ = nullptr;
-        initialized_ = false;
-        max_m_ = 0;
-    }
-	*/
-
-	initialized_ = false;
+    if(grid_ && max_J_ < maxJ)
+        grid_.reset();
 
     // initialize the grid if we have to
-    if(!initialized_)
+    if(!grid_)
     {
         max_Tval_ = 43.0; // rough
         max_T_ = 430;
         max_J_ = maxJ;
 
-        // initialize the table
-        const int nrow = max_T_+1;
-        const int ncol = max_J_+8+1;  // +8 for the higher orders required by the taylor series
-        grid_ = block_matrix(nrow, ncol);
-
+        nrow_ = max_T_+1;
+        ncol_ = max_J_+8+1;  // +8 for the higher orders required by the taylor series
+        grid_ = std::unique_ptr<double[]>(new double[nrow_ * ncol_]);
 
         for(int i = 0; i <= max_T_; i++) 
         {
             // we are using a 0.1-spaced grid
             const double Tval = 0.1*static_cast<double>(i);
 
+            // start of the rown in the (flattened) grid
+            double * gridpt = grid_.get() + i*ncol_;
+
             // Fill in all the values for this row
-            calculate_f(grid_[i], max_J_+8, Tval);
+            calculate_f(gridpt, max_J_+8, Tval);
         }
     }
 }
 
 Split_Fjt::~Split_Fjt()
 {
-    free_block(grid_);
 }
 
 void Split_Fjt::calculate(double * F, int J, double T)
@@ -182,7 +177,7 @@ void Split_Fjt::calculate(double * F, int J, double T)
         // (but including a negative sign)
         const double dx = xi - T;
 
-        const double * gridpts = &(grid_[lookup_idx][J]);
+        const double * gridpts = grid_.get() + lookup_idx*ncol_ + J;
 
         F[J] = gridpts[0]
                 + dx * (                  gridpts[1]
