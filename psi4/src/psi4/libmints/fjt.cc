@@ -127,8 +127,8 @@ Split_Fjt::Split_Fjt(unsigned int maxJ)
     // initialize the grid if we have to
     if(!grid_)
     {
-        max_Tval_ = 43.0; // rough
-        max_T_ = 430;
+        max_Tval_ = 40.0; // rough
+        max_T_ = 400;
         max_J_ = maxJ;
 
         nrow_ = max_T_+1;
@@ -159,9 +159,8 @@ void Split_Fjt::calculate(double * F, int J, double T)
     if(T > max_Tval_)
     {
         // long range asymptotic formula
-        const double p = -(2*J+1);
-        const double T2 = pow(T, p);
-        F[J] = boys_longfac[J] * sqrt(T2);
+        const double p = static_cast<double>(-J) - 0.5;
+        F[J] = boys_longfac[J] * pow(T, p);
     }
     else
     {
