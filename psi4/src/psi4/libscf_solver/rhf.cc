@@ -188,7 +188,9 @@ void RHF::form_G()
     C.push_back(Ca_subset("SO", "OCC"));
 
     // Run the JK object
+    timer_on("RHF: JKCompute");
     jk_->compute();
+    timer_off("RHF: JKCompute");
 
     // Pull the J and K matrices off
     const std::vector<SharedMatrix> & J = jk_->J();

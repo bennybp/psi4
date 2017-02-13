@@ -78,7 +78,7 @@
 #include "psi4/libparallel/ParallelPrinter.h"
 /* guess for HZ, if missing */
 #ifndef HZ
-#define HZ 60
+#error Need HZ
 #endif
 
 #define TIMER_KEYLEN 128
@@ -318,6 +318,12 @@ void timer_off(const char *key)
   struct timer *this_timer;
   struct timeval wall_stop;
 
+  /* Record the times before doing the scan. This way we don't time
+   * the lookup
+   */
+  times(&offtime);
+  gettimeofday(&wall_stop, NULL);
+
   this_timer = timer_scan(key);
 
   if(this_timer == NULL) {
@@ -335,12 +341,9 @@ void timer_off(const char *key)
 
   ontime = this_timer->ontime;
 
-  times(&offtime);
-
   this_timer->utime += ((double) (offtime.tms_utime-ontime.tms_utime))/HZ;
   this_timer->stime += ((double) (offtime.tms_stime-ontime.tms_stime))/HZ;
 
-  gettimeofday(&wall_stop, NULL);
   this_timer->wtime += timer_nsdiff(wall_stop, this_timer->wall_start);
 
   this_timer->status = TIMER_OFF;
