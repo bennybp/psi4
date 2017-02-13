@@ -148,15 +148,136 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
                         std::vector<std::shared_ptr<Matrix> >& J,
                         std::vector<std::shared_ptr<Matrix> >& K)
 {
-    // => Zeroing <= //
 
-    for (size_t ind = 0; ind < J.size(); ind++) {
+    for (size_t ind = 0; ind < J.size(); ind++)
         J[ind]->zero();
-    }
-    for (size_t ind = 0; ind < K.size(); ind++) {
+    for (size_t ind = 0; ind < K.size(); ind++)
         K[ind]->zero();
-    }
 
+    const int nthread = ints.size();
+    const size_t nbf = primary_->nbf();
+    const size_t nbf2 = nbf * nbf;
+    const size_t max_func = primary_->max_function_per_shell();
+    const size_t max_func2 = max_func*max_func;
+    const size_t nmat_J = J.size();
+    const size_t nmat_K = K.size();
+    const size_t nshell = primary_->nshell();
+
+
+    // the 2 is for J and K
+    const size_t worksize_J = nmat_J*max_func2;
+    const size_t worksize_K = nmat_K*max_func*nbf;
+    const size_t worksize = worksize_J + worksize_K;
+
+    // allocate and zero temporary workspaces
+    std::unique_ptr<double[]> work(new double[worksize*nthread]);
+    double * const workptr = work.get();
+
+    #pragma omp parallel for num_threads(nthread) schedule(guided)
+    for (int P = 0; P < nshell; ++P)
+    {
+        int thread = 0;
+        #ifdef _OPEQPP
+            thread = omp_get_thread_num();
+        #endif
+
+        double * const mywork = workptr + thread*worksize;
+        double * const my_J = mywork;
+        double * const my_K = mywork + worksize_J;
+
+        const auto & shellP = primary_->shell(P);
+        int nP = shellP.nfunction();
+        int sP = shellP.function_index();
+
+        for (int Q = 0; Q < nshell; ++Q)
+        {
+            memset(mywork, 0, worksize*sizeof(double));
+
+            const auto & shellQ = primary_->shell(Q);
+            int nQ = shellQ.nfunction();
+            int sQ = shellQ.function_index();
+
+            for (int R = 0; R < nshell; ++R)
+            {
+                const auto & shellR = primary_->shell(R);
+                int nR = shellR.nfunction();
+                int sR = shellR.function_index();
+
+                for (int S = 0; S < nshell; ++S)
+                {
+                    const double* buffer = ints[thread]->buffer();
+                    if(ints[thread]->compute_shell(P,Q,R,S) == 0)
+                        continue; // No integrals were computed here
+
+                    const auto & shellS = primary_->shell(S);
+                    int nS = shellS.nfunction();
+                    int sS = shellS.function_index();
+
+                    for (int oP = 0, index = 0; oP < nP; oP++) {
+                    for (int oQ = 0;            oQ < nQ; oQ++) {
+                    for (int oR = 0;            oR < nR; oR++) {
+                    for (int oS = 0;            oS < nS; oS++, index++) {
+
+                        double val = buffer[index];
+
+                        int p = oP + sP;
+                        int q = oQ + sQ;
+                        int r = oR + sR;
+                        int s = oS + sS;
+
+                        if (do_J_) {
+                            for (int i = 0; i < nmat_J; i++)
+                                my_J[i*nP*nQ + oP*nQ + oQ] += D[i]->get(0,r,s)*buffer[index];
+                        }
+
+                        if (do_K_) {
+                            // buffer holds (pr|qs) when viewed from K
+                            // This stores Kpr, summing over q and s
+
+                            for (int i = 0; i < nmat_K; i++)
+                                my_K[i*nP*nbf + oP*nbf + r] += D[i]->get(0,q,s)*buffer[index];
+                        }
+
+                    }}}}
+                }
+            }
+
+            // commit to the final matrix
+            if(do_J_)
+            {
+                for(size_t i = 0; i < nmat_J; i++)
+                {
+                    double * const Jp = J[i]->get_pointer();
+                    double * const my_Jp = my_J + i*nP*nQ;
+
+                    for (int oP = 0; oP < nP; oP++)
+                    for (int oQ = 0; oQ < nQ; oQ++)
+                    {
+                        int p = oP + sP;
+                        int q = oQ + sQ;
+                        Jp[p*nbf+q] += my_Jp[oP*nQ + oQ];
+                    }
+                }
+            }
+
+            if(do_K_)
+            {
+                for(size_t i = 0; i < nmat_K; i++)
+                {
+                    double * const Kp = K[i]->get_pointer();
+                    double * const my_Kp = my_K + i*nP*nbf;
+
+                   for (int oP = 0; oP < nP; oP++)
+                   for(int r = 0; r < nbf; r++)
+                   {
+                       int p = oP + sP;
+                       Kp[p*nbf+r] += my_Kp[oP*nbf + r];
+                   }
+                }
+            }
+        }
+    }
+#if 0
     // => Sizing <= //
 
     int nshell  = primary_->nshell();
@@ -582,6 +703,7 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
         size_t possible_shells = ntri * (ntri + 1L) / 2L;
         printer->Printf( "Computed %20zu Shell Quartets out of %20zu, (%11.3E ratio)\n", computed_shells, possible_shells, computed_shells / (double) possible_shells);
     }
+#endif
 }
 
 #if 0
