@@ -37,24 +37,33 @@ namespace psi {
 
 class SimintTwoElectronInt : public TwoBodyAOInt
 {
-    private:
+    public:
         typedef std::vector<simint_multi_shellpair> ShellPairVec;
         typedef std::vector<simint_shell> ShellVec;
 
-        static simint_shell PsiShellToSimint(const GaussianShell & s);
+        SimintTwoElectronInt(const IntegralFactory * integral, int deriv=0, bool use_shell_pairs=false);
+        virtual ~SimintTwoElectronInt();
 
-        static void MultishellVectorDeleter(ShellPairVec * mpv);
-        static void ShellVectorDeleter(ShellVec * mpv);
+        virtual size_t compute_shell(const AOShellCombinationsIterator&) override;
 
-        static std::shared_ptr<ShellPairVec> 
-               CreateShellPairs(const ShellVec & bs1, const ShellVec & bs2);
+        virtual size_t compute_shell(int, int, int, int) override;
 
-        std::shared_ptr<ShellVec> CreateShellVec(const BasisSet & bs);
+        virtual void
+        compute_shell_blocks(int shellpair1, int shellpair2,
+                             int npair1 = -1, int npair2 = -1) override;
 
-        std::shared_ptr<ShellPairVec>
-        initialize_shell_pair_single_(const std::vector<ShellPairBlock> & vsh,
-                                      const ShellVec & shell1, const ShellVec & shell2);
+        virtual void
+        compute_shell_blocks(const ShellPairBlock & vsh12,
+                             const ShellPairBlock & vsh34) override;
 
+        virtual size_t compute_shell_deriv1(int, int, int, int);
+
+        virtual size_t compute_shell_deriv2(int, int, int, int);
+
+    protected:
+        SimintTwoElectronInt(const SimintTwoElectronInt & rhs);
+
+    private:
         void create_blocks(void);
 
         size_t batchsize_;
@@ -75,26 +84,6 @@ class SimintTwoElectronInt : public TwoBodyAOInt
         std::shared_ptr<ShellPairVec> single_spairs_ket_;
         std::shared_ptr<ShellPairVec> multi_spairs_bra_;
         std::shared_ptr<ShellPairVec> multi_spairs_ket_;
-
-
-    protected:
-        SimintTwoElectronInt(const SimintTwoElectronInt & rhs);
-
-    public:
-        SimintTwoElectronInt(const IntegralFactory * integral, int deriv=0, bool use_shell_pairs=false);
-        virtual ~SimintTwoElectronInt();
-
-        virtual size_t compute_shell(const AOShellCombinationsIterator&) override;
-
-        virtual size_t compute_shell(int, int, int, int) override;
-
-        virtual void
-        compute_shell_blocks(int shellpair1, int shellpair2,
-                             int npair1 = -1, int npair2 = -1) override;
-
-        virtual size_t compute_shell_deriv1(int, int, int, int);
-
-        virtual size_t compute_shell_deriv2(int, int, int, int);
 };
 
 

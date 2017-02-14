@@ -137,7 +137,6 @@ void DirectJK::compute_JK()
             build_JK(ints,D_ao_,temp,K_ao_);
         }
     }
-
 }
 void DirectJK::postiterations()
 {
@@ -173,12 +172,31 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
     memset(workptr, 0, worksize*nthread*sizeof(double));
 
 
-    #pragma omp parallel for num_threads(nthread) schedule(guided)
-    for (int P = 0; P < nshell; ++P)
+    // create PQ blocks
+    // only one block per batch
+    std::vector<ShellPairBlock> PQ_blocks;
+
+    for(size_t P = 0; P < nshell; P++)
+    for(size_t Q = 0; Q <= P; Q++)
     {
-        int thread = 0;
+        if(sieve_->shell_pair_significant(P, Q))
+            PQ_blocks.push_back(ShellPairBlock{{P, Q}});
+    }
+
+    // sort shells by am
+    std::vector<std::vector<int>> sorted_shells(primary_->max_am()+1);
+    for(int P = 0; P < nshell; P++)
+        sorted_shells[primary_->shell(P).am()].push_back(P);
+
+    const size_t nblocks_PQ = PQ_blocks.size();
+
+    #pragma omp parallel for num_threads(nthread) schedule(guided)
+    for (int PQblock_idx = 0; PQblock_idx < nblocks_PQ; ++PQblock_idx)
+    {
         #ifdef _OPENMP
-            thread = omp_get_thread_num();
+            const int thread = omp_get_thread_num();
+        #else
+            const int thread = 0;
         #endif
 
 
@@ -186,113 +204,119 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
         double * const my_J = mywork;
         double * const my_K = mywork + worksize_J;
 
+        const auto & PQblock = PQ_blocks[PQblock_idx];
+        const size_t nPQ = PQblock.size();
+
+        // we only have one P and one Q
+        const int P = PQblock[0].first;
+        const int Q = PQblock[0].second;
         const auto & shellP = primary_->shell(P);
+        const auto & shellQ = primary_->shell(Q);
         const int nP = shellP.nfunction();
+        const int nQ = shellQ.nfunction();
         const int Pstart = shellP.function_index();
+        const int Qstart = shellQ.function_index();
         const int Pend = Pstart + nP;
+        const int Qend = Qstart + nQ;
+        const int PQ = (P*(P+1))/2 + Q;
 
-        for (int Q = 0; Q <= P; ++Q)
+
+        // generate the batches for RS
+        std::vector<ShellPairBlock> RS_blocks;
+
+        for(size_t R = 0; R < nshell; R++)
+        for(size_t S = 0; S <= R; S++)
         {
-            if(!sieve_->shell_pair_significant(P,Q))
-                continue;
-
-            const auto & shellQ = primary_->shell(Q);
-            const int nQ = shellQ.nfunction();
-            const int Qstart = shellQ.function_index();
-            const int Qend = Qstart + nQ;
-            const int PQ = (P*(P+1))/2 + Q;
-
-            for (int R = 0; R < nshell; ++R)
+            const int RS = (R*(R+1))/2 + S;
+            if(RS <= PQ && sieve_->shell_pair_significant(R, S)
+                        && sieve_->shell_significant(P,Q,R,S))
             {
+                RS_blocks.push_back(ShellPairBlock{{R, S}});
+            }
+        }
+        const size_t nblocks_RS = RS_blocks.size();
+
+
+        for (int RSblock_idx = 0; RSblock_idx < nblocks_RS; ++RSblock_idx)
+        {
+            const auto & RSblock = RS_blocks[RSblock_idx];
+            const size_t nRS = RSblock.size();
+
+            // compute the blocks
+            ints[thread]->compute_shell_blocks(PQblock, RSblock);
+            const double * buffer = ints[thread]->buffer();
+
+            for(size_t RS_idx = 0; RS_idx < nRS; RS_idx++)
+            {
+                // unpack what indices we are doing
+                const int R = RSblock[RS_idx].first;
+                const int S = RSblock[RS_idx].second;
+
                 const auto & shellR = primary_->shell(R);
+                const auto & shellS = primary_->shell(S);
                 const int nR = shellR.nfunction();
+                const int nS = shellS.nfunction();
                 const int Rstart = shellR.function_index();
+                const int Sstart = shellS.function_index();
                 const int Rend = Rstart + nR;
+                const int Send = Sstart + nS;
+                const int RS = (R*(R+1))/2 + S;
 
-                for (int S = 0; S <= R; ++S)
+                double fac = 1.0;
+                if(P == Q) fac *= 0.5;
+                if(R == S) fac *= 0.5;
+                if(PQ == RS) fac *= 0.5;
+
+                for (int p = Pstart, index = 0; p < Pend; p++)
+                for (int q = Qstart           ; q < Qend; q++)
+                for (int r = Rstart           ; r < Rend; r++)
+                for (int s = Sstart           ; s < Send; s++, index++)
                 {
-                    if(!sieve_->shell_pair_significant(R,S))
-                        continue;
-                    if(!sieve_->shell_significant(P,Q,R,S))
-                        continue;
+                    const int pq = (p*(p+1))/2 + q;
+                    const int rs = (r*(r+1))/2 + s;
 
-                    const auto & shellS = primary_->shell(S);
-                    const int nS = shellS.nfunction();
-                    const int Sstart = shellS.function_index();
-                    const int Send = Sstart + nS;
-                    const int RS = (R*(R+1))/2 + S;
+                    const int nbf_p = p*nbf;
+                    const int nbf_q = q*nbf;
+                    const int nbf_r = r*nbf;
+                    const int nbf_s = s*nbf;
 
-                    // is rs always greater than pq
-                    //outfile->Printf("P, Q, R, S, PQ, RS, RS<=PQ, other: %3d %3d %3d %3d %3d %3d     %3d %3d\n",
-                    //                    P, Q, R, S, PQ, RS, (RS <= PQ ? 1 : 0),
-                    //                    (((Rstart*(Rstart+1))/2 + Sstart) <= ((Pend*(Pend+1))/2 + Qend) ? 1 : 0));
-                    //if( ((Rstart*(Rstart+1))/2 + Sstart) > ((Pend*(Pend+1))/2 + Qend) )
-                    //    continue;
-                    if(RS > PQ)
-                        continue;
+                    double val = fac*buffer[index];
 
-                    double fac = 1.0;
-                    if(P == Q) fac *= 0.5;
-                    if(R == S) fac *= 0.5;
-                    if(PQ == RS) fac *= 0.5;
-
-                    const double* buffer = ints[thread]->buffer();
-                    if(ints[thread]->compute_shell(P,Q,R,S) == 0)
-                        continue;
-
-                    for (int p = Pstart, index = 0; p < Pend; p++)
-                    for (int q = Qstart           ; q < Qend; q++)
-                    for (int r = Rstart           ; r < Rend; r++)
-                    for (int s = Sstart           ; s < Send; s++, index++)
+                    if (do_J_)
                     {
-                        //if(q > p) continue;
-                        //if(s > r) continue;
-
-                        const int pq = (p*(p+1))/2 + q;
-                        const int rs = (r*(r+1))/2 + s;
-
-                        //if(rs > pq) continue;
-
-                        const int nbf_p = p*nbf;
-                        const int nbf_q = q*nbf;
-                        const int nbf_r = r*nbf;
-                        const int nbf_s = s*nbf;
-
-                        double val = fac*buffer[index];
-
-                        if (do_J_)
+                        for (int i = 0; i < nmat_J; i++)
                         {
-                            for (int i = 0; i < nmat_J; i++)
-                            {
-                                double const * const Dp = D[i]->get_pointer();
-                                double * const Jp = my_J + i*nbf2;
-                                Jp[nbf_p + q] += (Dp[nbf_r+s] + Dp[nbf_s+r])*val;
-                                Jp[nbf_q + p] += (Dp[nbf_r+s] + Dp[nbf_s+r])*val;
-                                Jp[nbf_r + s] += (Dp[nbf_p+q] + Dp[nbf_q+p])*val;
-                                Jp[nbf_s + r] += (Dp[nbf_p+q] + Dp[nbf_q+p])*val;
-                            }
+                            double const * const Dp = D[i]->get_pointer();
+                            double * const Jp = my_J + i*nbf2;
+                            Jp[nbf_p + q] += (Dp[nbf_r+s] + Dp[nbf_s+r])*val;
+                            Jp[nbf_q + p] += (Dp[nbf_r+s] + Dp[nbf_s+r])*val;
+                            Jp[nbf_r + s] += (Dp[nbf_p+q] + Dp[nbf_q+p])*val;
+                            Jp[nbf_s + r] += (Dp[nbf_p+q] + Dp[nbf_q+p])*val;
                         }
+                    }
 
-                        if (do_K_)
+                    if (do_K_)
+                    {
+                        for (int i = 0; i < nmat_K; i++)
                         {
-                            for (int i = 0; i < nmat_K; i++)
-                            {
-                                double const * const Dp = D[i]->get_pointer();
-                                double * const Kp = my_K + i*nbf2;
+                            double const * const Dp = D[i]->get_pointer();
+                            double * const Kp = my_K + i*nbf2;
 
-                                Kp[nbf_p + r] += Dp[nbf_q+s]*val;
-                                Kp[nbf_r + p] += Dp[nbf_s+q]*val;
-                                Kp[nbf_q + r] += Dp[nbf_p+s]*val;
-                                Kp[nbf_r + q] += Dp[nbf_s+p]*val;
+                            Kp[nbf_p + r] += Dp[nbf_q+s]*val;
+                            Kp[nbf_q + r] += Dp[nbf_p+s]*val;
+                            Kp[nbf_p + s] += Dp[nbf_q+r]*val;
+                            Kp[nbf_q + s] += Dp[nbf_p+r]*val;
 
-                                Kp[nbf_p + s] += Dp[nbf_q+r]*val;
-                                Kp[nbf_s + p] += Dp[nbf_r+q]*val;
-                                Kp[nbf_q + s] += Dp[nbf_p+r]*val;
-                                Kp[nbf_s + q] += Dp[nbf_r+p]*val;
-                            }
+                            Kp[nbf_r + p] += Dp[nbf_s+q]*val;
+                            Kp[nbf_s + p] += Dp[nbf_r+q]*val;
+                            Kp[nbf_r + q] += Dp[nbf_s+p]*val;
+                            Kp[nbf_s + q] += Dp[nbf_r+p]*val;
                         }
                     }
                 }
+
+                buffer += nP*nQ*nR*nS;
+
             }
         }
     }

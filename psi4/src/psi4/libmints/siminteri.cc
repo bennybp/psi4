@@ -37,10 +37,30 @@
 #define SIMINT_SCREEN_TOL 0.0
 #define SIMINT_SCREEN 0
 
+using ShellVec = psi::SimintTwoElectronInt::ShellVec;
+using ShellPairVec = psi::SimintTwoElectronInt::ShellPairVec;
+
 namespace psi {
 
 
-simint_shell SimintTwoElectronInt::PsiShellToSimint(const GaussianShell & s)
+// Some helpers
+static void shell_vector_deleter_(ShellVec * mpv)
+{
+    for(auto & mp : *mpv)
+       simint_free_shell(&mp);
+    mpv->clear();
+}
+
+
+static void multishell_vector_deleter_(ShellPairVec * mpv)
+{
+    for(auto & mp : *mpv)
+       simint_free_multi_shellpair(&mp);
+    mpv->clear();
+}
+
+
+static simint_shell psi_shell_to_simint_(const GaussianShell & s)
 {
     size_t nprim = s.nprimitive();
     simint_shell newgs;
@@ -59,37 +79,21 @@ simint_shell SimintTwoElectronInt::PsiShellToSimint(const GaussianShell & s)
 }
 
 
-void SimintTwoElectronInt::ShellVectorDeleter(ShellVec * mpv)
+static std::shared_ptr<ShellVec>
+create_shell_vec_(const BasisSet & bs)
 {
-    for(auto & mp : *mpv)
-       simint_free_shell(&mp);
-    mpv->clear();
-}
-
-
-
-void SimintTwoElectronInt::MultishellVectorDeleter(ShellPairVec * mpv)
-{
-    for(auto & mp : *mpv)
-       simint_free_multi_shellpair(&mp);
-    mpv->clear();
-}
-
-std::shared_ptr<SimintTwoElectronInt::ShellVec>
-SimintTwoElectronInt::CreateShellVec(const BasisSet & bs)
-{
-    std::shared_ptr<ShellVec> shells = std::shared_ptr<ShellVec>(new ShellVec, &ShellVectorDeleter);
+    std::shared_ptr<ShellVec> shells = std::shared_ptr<ShellVec>(new ShellVec, &shell_vector_deleter_);
     for(size_t i = 0; i < bs.nshell(); i++)
-        shells->push_back(PsiShellToSimint(bs.shell(i)));
+        shells->push_back(psi_shell_to_simint_(bs.shell(i)));
 
     return shells;
 } 
 
-std::shared_ptr<SimintTwoElectronInt::ShellPairVec>
-SimintTwoElectronInt::CreateShellPairs(const ShellVec & bs1, const ShellVec & bs2)
+static std::shared_ptr<ShellPairVec>
+create_shell_pair_(const ShellVec & bs1, const ShellVec & bs2)
 {
-    std::shared_ptr<ShellPairVec> spairs = std::shared_ptr<ShellPairVec>(new ShellPairVec,
-                                                                         &MultishellVectorDeleter);
+    auto spairs = std::shared_ptr<ShellPairVec>(new ShellPairVec, &multishell_vector_deleter_);
+
     size_t nshell1 = bs1.size();
     size_t nshell2 = bs2.size();
     spairs->resize(nshell1 * nshell2);
@@ -110,6 +114,50 @@ SimintTwoElectronInt::CreateShellPairs(const ShellVec & bs1, const ShellVec & bs
     return spairs;
 }
 
+static ShellPairVec
+create_multi_shellpair_(const std::vector<ShellPairBlock> & vsh,
+                        const ShellVec & shell1,
+                        const ShellVec & shell2)
+{
+    ShellPairVec ret;
+
+    // copying simint shells will copy the pointers. That is ok - we won't
+    // do anything special to delete them
+    for(const auto & spairs : vsh)
+    {
+        std::vector<simint_shell> simint_shells;
+        
+        for(const auto & s : spairs)
+        {
+            simint_shells.push_back(shell1[s.first]);
+            simint_shells.push_back(shell2[s.second]);
+        }
+
+        // spairs.size() should be simint_shells.size()/2
+        simint_multi_shellpair P;
+        simint_initialize_multi_shellpair(&P);
+        simint_create_multi_shellpair2(spairs.size(), simint_shells.data(), &P, SIMINT_SCREEN);
+        ret.push_back(P);
+    }
+
+    return ret;
+}
+
+static std::shared_ptr<ShellPairVec>
+create_shared_multi_shellpair_(const std::vector<ShellPairBlock> & vsh,
+                               const ShellVec & shell1,
+                               const ShellVec & shell2)
+{
+    auto vec = create_multi_shellpair_(vsh, shell1, shell2);
+    return std::shared_ptr<ShellPairVec>(new ShellPairVec(std::move(vec)));
+}
+
+
+
+
+////////////////////////////////////////////////
+// Actual class code starts here
+////////////////////////////////////////////////
 
 SimintTwoElectronInt::SimintTwoElectronInt(const IntegralFactory * integral, int deriv, bool use_shell_pairs)
     : TwoBodyAOInt(integral, deriv)
@@ -138,19 +186,19 @@ SimintTwoElectronInt::SimintTwoElectronInt(const IntegralFactory * integral, int
     source_ = source_full_;
 
     // build plain shells
-    shells1_ = CreateShellVec(*original_bs1_);
+    shells1_ = create_shell_vec_(*original_bs1_);
 
     if(original_bs2_ == original_bs1_)
         shells2_ = shells1_;
     else
-        shells2_ = CreateShellVec(*original_bs2_);
+        shells2_ = create_shell_vec_(*original_bs2_);
 
     if(original_bs3_ == original_bs1_)
         shells3_ = shells1_;
     else if(original_bs3_ == original_bs2_)
         shells3_ = shells2_;
     else
-        shells3_ = CreateShellVec(*original_bs3_);
+        shells3_ = create_shell_vec_(*original_bs3_);
 
     if(original_bs4_ == original_bs1_)
         shells4_ = shells1_;
@@ -159,7 +207,7 @@ SimintTwoElectronInt::SimintTwoElectronInt(const IntegralFactory * integral, int
     else if(original_bs4_ == original_bs3_)
         shells4_ = shells3_;
     else
-        shells4_ = CreateShellVec(*original_bs4_);
+        shells4_ = create_shell_vec_(*original_bs4_);
     
 
     bra_same_ = (original_bs1_ == original_bs2_);
@@ -167,12 +215,12 @@ SimintTwoElectronInt::SimintTwoElectronInt(const IntegralFactory * integral, int
     braket_same_ = (original_bs1_ == original_bs3_ &&
                     original_bs2_ == original_bs4_);
 
-    single_spairs_bra_ = CreateShellPairs(*shells1_, *shells2_);
+    single_spairs_bra_ = create_shell_pair_(*shells1_, *shells2_);
 
     if(braket_same_)
         single_spairs_ket_ = single_spairs_bra_;
     else
-        single_spairs_ket_ = CreateShellPairs(*shells3_, *shells4_);
+        single_spairs_ket_ = create_shell_pair_(*shells3_, *shells4_);
 
     create_blocks();
 }
@@ -287,35 +335,6 @@ size_t SimintTwoElectronInt::compute_shell(int sh1, int sh2, int sh3, int sh4)
 }
 
 
-std::shared_ptr<SimintTwoElectronInt::ShellPairVec>
-SimintTwoElectronInt::initialize_shell_pair_single_(const std::vector<ShellPairBlock> & vsh,
-                                                    const SimintTwoElectronInt::ShellVec & shell1,
-                                                    const SimintTwoElectronInt::ShellVec & shell2)
-{
-    auto ret =  std::shared_ptr<ShellPairVec>(new ShellPairVec,
-                                              &MultishellVectorDeleter);
-
-    // copying simint shells will copy the pointers. That is ok - we won't
-    // do anything special to delete them
-    for(const auto & spairs : vsh)
-    {
-        std::vector<simint_shell> simint_shells;
-        
-        for(const auto & s : spairs)
-        {
-            simint_shells.push_back(shell1[s.first]);
-            simint_shells.push_back(shell2[s.second]);
-        }
-
-        // spairs.size() should be simint_shells.size()/2
-        simint_multi_shellpair P;
-        simint_initialize_multi_shellpair(&P);
-        simint_create_multi_shellpair2(spairs.size(), simint_shells.data(), &P, SIMINT_SCREEN);
-        ret->push_back(P);
-    }
-
-    return ret;
-}
 
 
 void
@@ -409,6 +428,116 @@ SimintTwoElectronInt::compute_shell_blocks(int shellpair1, int shellpair2,
     }
 }
 
+
+void SimintTwoElectronInt::compute_shell_blocks(const ShellPairBlock & vsh12,
+                                                const ShellPairBlock & vsh34)
+{
+    ShellVec sv12, sv34;
+
+    simint_multi_shellpair P, Q;
+    simint_initialize_multi_shellpair(&P);
+    simint_initialize_multi_shellpair(&Q);
+
+
+    std::vector<simint_shell> simint_shells;
+        
+    // Bra side
+    for(const auto & s : vsh12)
+    {
+        simint_shells.push_back((*shells1_)[s.first]);
+        simint_shells.push_back((*shells2_)[s.second]);
+    }
+
+    simint_create_multi_shellpair2(simint_shells.size()/2, simint_shells.data(), &P, SIMINT_SCREEN);
+    simint_shells.clear();
+
+
+    // Ket side
+    for(const auto & s : vsh34)
+    {
+        simint_shells.push_back((*shells3_)[s.first]);
+        simint_shells.push_back((*shells4_)[s.second]);
+    }
+
+    simint_create_multi_shellpair2(simint_shells.size()/2, simint_shells.data(), &Q, SIMINT_SCREEN);
+    simint_shells.clear();
+
+
+    // Now actually calculate
+    // set the pointers to the beginning of the work spaces
+    target_ = target_full_;
+    source_ = source_full_;
+
+    // get the basic info
+    std::pair<int, int> sh12 = *vsh12.begin();
+    std::pair<int, int> sh34 = *vsh34.begin();
+
+    const auto & shell1 = original_bs1_->shell(sh12.first);
+    const auto & shell2 = original_bs2_->shell(sh12.second);
+    const auto & shell3 = original_bs3_->shell(sh34.first);
+    const auto & shell4 = original_bs4_->shell(sh34.second);
+
+    bool do_cart = force_cartesian_ || (shell1.is_cartesian() &&
+                                        shell2.is_cartesian() &&
+                                        shell3.is_cartesian() &&
+                                        shell4.is_cartesian());
+
+
+    const int ncart1 = shell1.ncartesian();
+    const int ncart2 = shell2.ncartesian();
+    const int ncart3 = shell3.ncartesian();
+    const int ncart4 = shell4.ncartesian();
+    const int n1 = shell1.nfunction();
+    const int n2 = shell2.nfunction();
+    const int n3 = shell3.nfunction();
+    const int n4 = shell4.nfunction();
+
+    const int ncart1234 = ncart1 * ncart2 * ncart3 * ncart4;
+    const int n1234 = n1 * n2 * n3 * n4;
+    curr_buff_size_ = n1234;
+
+    // Check that we have enough space now
+    size_t nshell1234 = P.nshell12 * Q.nshell12;
+
+    if(nshell1234 == 0)
+        throw PSIEXCEPTION("No shells passed to calculate");
+    if(nshell1234 > batchsize_)
+        throw PSIEXCEPTION("Not enough space allocated for that many shells\n");
+
+    // actually compute
+    // if we are doing cartesian, put directly in target. Otherwise, put in source
+    // and let pure_transform put it in target
+    size_t ncomputed = 0;
+
+    if(do_cart)
+        ncomputed = simint_compute_eri(&P, &Q, SIMINT_SCREEN_TOL, sharedwork_, target_);
+    else
+    {
+        ncomputed = simint_compute_eri(&P, &Q, SIMINT_SCREEN_TOL, sharedwork_, source_);
+        if(!do_cart)
+        {
+            for(int i = 0; i < P.nshell12; i++)
+            {
+                auto sh12 = vsh12[i];
+
+                for(int j = 0; j < Q.nshell12; j++)
+                {
+                    auto sh34 = vsh34[j];
+                    pure_transform(sh12.first, sh12.second,
+                                   sh34.first, sh34.second, 1, false);
+    
+                    source_ += ncart1234;
+                    target_ += n1234;
+                }
+            }
+        }
+    }
+
+    simint_free_multi_shellpair(&P);
+    simint_free_multi_shellpair(&Q);
+}
+
+
 void SimintTwoElectronInt::create_blocks(void)
 {
     blocks12_.clear();
@@ -490,8 +619,8 @@ void SimintTwoElectronInt::create_blocks(void)
             blocks34_.push_back(std::move(curblock));
     }
 
-    multi_spairs_bra_ = initialize_shell_pair_single_(blocks12_, *shells1_, *shells2_); 
-    multi_spairs_ket_ = initialize_shell_pair_single_(blocks34_, *shells3_, *shells4_); 
+    multi_spairs_bra_ = create_shared_multi_shellpair_(blocks12_, *shells1_, *shells2_); 
+    multi_spairs_ket_ = create_shared_multi_shellpair_(blocks34_, *shells3_, *shells4_); 
 
 }
 

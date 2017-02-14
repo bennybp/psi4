@@ -211,6 +211,12 @@ void TwoBodyAOInt::compute_shell_blocks(int shellpair12, int shellpair34,
     }
 }
 
+void
+TwoBodyAOInt::compute_shell_blocks(const ShellPairBlock & vsh12, const ShellPairBlock & vsh34)
+{
+    throw PSIEXCEPTION("NYI");
+}
+
 void TwoBodyAOInt::normalize_am(std::shared_ptr<GaussianShell> s1, std::shared_ptr<GaussianShell> s2, std::shared_ptr<GaussianShell> s3, std::shared_ptr<GaussianShell> s4, int nchunk)
 {
     // Integrals assume this normalization is 1.0.
