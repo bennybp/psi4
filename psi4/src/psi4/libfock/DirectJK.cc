@@ -148,16 +148,15 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
                         std::vector<std::shared_ptr<Matrix> >& K)
 {
     const int nthread = ints.size();
+    const size_t nshell = primary_->nshell();
+    const int maxam = primary_->max_am();
     const size_t nbf = primary_->nbf();
     const size_t nbf2 = nbf * nbf;
-    const size_t nmat_J = J.size();
-    const size_t nmat_K = K.size();
-    const size_t nshell = primary_->nshell();
+    const size_t nmat_J = ( do_J_ ? J.size() : 0 );
+    const size_t nmat_K = ( do_K_ ? K.size() : 0 );
 
-
-    // the 2 is for J and K
-    const size_t worksize_J = nbf2;
-    const size_t worksize_K = nbf2;
+    const size_t worksize_J = ( do_J_ ? nbf2 : 0 );
+    const size_t worksize_K = ( do_K_ ? nbf2 : 0 );
     const size_t worksize = worksize_J + worksize_K;
 
     // allocate and zero temporary workspaces
@@ -170,15 +169,15 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
     // only one block per batch
     std::vector<ShellPairBlock> PQ_blocks;
 
-    for(size_t P = 0; P < nshell; P++)
-    for(size_t Q = 0; Q <= P; Q++)
+    for(int P = 0; P < nshell; P++)
+    for(int Q = 0; Q <= P; Q++)
     {
         if(sieve_->shell_pair_significant(P, Q))
-            PQ_blocks.push_back(ShellPairBlock{{P, Q}});
+            PQ_blocks.push_back({{P, Q}});
     }
 
     // sort shells by am
-    std::vector<std::vector<int>> sorted_shells(primary_->max_am()+1);
+    std::vector<std::vector<int>> sorted_shells(maxam+1);
     for(int P = 0; P < nshell; P++)
         sorted_shells[primary_->shell(P).am()].push_back(P);
 
@@ -193,15 +192,12 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
             const int thread = 0;
         #endif
 
-
         double * const mywork = workptr + thread*worksize;
         double * const my_J = mywork;
         double * const my_K = mywork + worksize_J;
 
         const auto & PQblock = PQ_blocks[PQblock_idx];
-        const size_t nPQ = PQblock.size();
 
-        // we only have one P and one Q
         const int P = PQblock[0].first;
         const int Q = PQblock[0].second;
         const auto & shellP = primary_->shell(P);
@@ -214,20 +210,38 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
         const int Qend = Qstart + nQ;
         const int PQ = (P*(P+1))/2 + Q;
 
-
         // generate the batches for RS
         std::vector<ShellPairBlock> RS_blocks;
 
-        for(size_t R = 0; R < nshell; R++)
-        for(size_t S = 0; S <= R; S++)
+        for(int am1 = 0; am1 <= maxam; am1++)
+        for(int am2 = 0; am2 <= maxam; am2++)
         {
-            const int RS = (R*(R+1))/2 + S;
-            if(RS <= PQ && sieve_->shell_pair_significant(R, S)
-                        && sieve_->shell_significant(P,Q,R,S))
+            ShellPairBlock blk;
+
+            for(size_t i = 0; i < sorted_shells[am1].size(); i++)
+            for(size_t j = 0; j < sorted_shells[am2].size(); j++)
             {
-                RS_blocks.push_back(ShellPairBlock{{R, S}});
+                int R = sorted_shells[am1][i];
+                int S = sorted_shells[am2][j];
+
+                const int RS = (R*(R+1))/2 + S;
+                if(S <= R && RS <= PQ
+                          && sieve_->shell_pair_significant(R, S)
+                          && sieve_->shell_significant(P,Q,R,S))
+                {
+                    blk.push_back({R, S});
+                    if(blk.size() == 32)
+                    {
+                        RS_blocks.push_back(blk);
+                        blk.clear();
+                    }
+                }
             }
+
+            if(blk.size())
+                RS_blocks.push_back(std::move(blk));
         }
+
         const size_t nblocks_RS = RS_blocks.size();
 
 
@@ -317,7 +331,8 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
 
 
     // commit to the final matrix
-    // This does a quick and dirty tree reduction
+    // This does a quick and dirty tree reduction. The matrices
+    // accumulate at the end of the workspace
     size_t cthreads = nthread;
     while(cthreads > 2)
     {
