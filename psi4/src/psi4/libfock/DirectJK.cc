@@ -333,46 +333,72 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
     // commit to the final matrix
     // This does a quick and dirty tree reduction. The matrices
     // accumulate at the end of the workspace
-    size_t cthreads = nthread;
-    while(cthreads > 2)
+    if(nthread > 1)
     {
-
-        #pragma omp parallel for num_threads(cthreads/2)
-        for(size_t i = 0; i < cthreads/2; i++)
+        size_t cthreads = nthread;
+        while(cthreads > 2)
         {
-            double * const src = workptr + i*worksize;
-            double * const dest = workptr + (i+(cthreads/2))*worksize;
 
-            for(size_t n = 0; n < (nmat_J+nmat_K)*nbf2; n++)
-                dest[n] += src[n];
+            #pragma omp parallel for num_threads(cthreads/2)
+            for(size_t i = 0; i < cthreads/2; i++)
+            {
+                double * const src = workptr + i*worksize;
+                double * const dest = workptr + (i+(cthreads/2))*worksize;
+
+                for(size_t n = 0; n < (nmat_J+nmat_K)*nbf2; n++)
+                    dest[n] += src[n];
+            }
+            workptr += (cthreads/2)*worksize;
+            cthreads = (cthreads % 2 ? (cthreads/2+1) : (cthreads/2));
         }
-        workptr += (cthreads/2)*worksize;
-        cthreads = (cthreads % 2 ? (cthreads/2+1) : (cthreads/2));
-    }
 
-    if(do_J_)
-    {
-        for(int i = 0; i < nmat_J; i++)
+        // we now have two left. Sum them into their final destination
+        if(do_J_)
         {
-            double const * const my_J1 = workptr;
-            double const * const my_J2 = workptr + worksize;
-            double * const Jp = J[i]->get_pointer();
+            for(int i = 0; i < nmat_J; i++)
+            {
+                double const * const my_J1 = workptr;
+                double const * const my_J2 = workptr + worksize;
+                double * const Jp = J[i]->get_pointer();
 
-            for(size_t n = 0; n < nbf2; n++)
-                Jp[n] = my_J1[n] + my_J2[n];
+                for(size_t n = 0; n < nbf2; n++)
+                    Jp[n] = my_J1[n] + my_J2[n];
+            }
+        }
+
+        if(do_K_)
+        {
+            for(int i = 0; i < nmat_K; i++)
+            {
+                double const * const my_K1 = workptr + worksize_J;
+                double const * const my_K2 = workptr + worksize + worksize_J;
+                double * const Kp = K[i]->get_pointer();
+
+                for(size_t n = 0; n < nbf2; n++)
+                    Kp[n] = my_K1[n] + my_K2[n];
+            }
         }
     }
-
-    if(do_K_)
+    else
     {
-        for(int i = 0; i < nmat_K; i++)
+        if(do_J_)
         {
-            double const * const my_K1 = workptr + worksize_J;
-            double const * const my_K2 = workptr + worksize + worksize_J;
-            double * const Kp = K[i]->get_pointer();
+            for(int i = 0; i < nmat_J; i++)
+            {
+                double const * const my_J = workptr + i*worksize;
+                double * const Jp = J[i]->get_pointer();
+                memcpy(Jp, my_J, nbf2 * sizeof(double)); 
+            }
+        }
 
-            for(size_t n = 0; n < nbf2; n++)
-                Kp[n] = my_K1[n] + my_K2[n];
+        if(do_K_)
+        {
+            for(int i = 0; i < nmat_K; i++)
+            {
+                double const * const my_K = workptr + i*worksize + worksize_J;
+                double * const Kp = K[i]->get_pointer();
+                memcpy(Kp, my_K, nbf2 * sizeof(double)); 
+            }
         }
     }
 
