@@ -183,6 +183,11 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
 
     const size_t nblocks_PQ = PQ_blocks.size();
 
+    // pull these out to prevent many get_pointer() calls
+    double * Dptr[D.size()];
+    for(size_t i = 0; i < D.size(); i++)
+        Dptr[i] = D[i]->get_pointer();
+
     #pragma omp parallel for num_threads(nthread) schedule(guided)
     for (int PQblock_idx = 0; PQblock_idx < nblocks_PQ; ++PQblock_idx)
     {
@@ -294,7 +299,7 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
                     {
                         for (int i = 0; i < nmat_J; i++)
                         {
-                            double const * const Dp = D[i]->get_pointer();
+                            double const * const Dp = Dptr[i];
                             double * const Jp = my_J + i*nbf2;
                             Jp[nbf_p + q] += (Dp[nbf_r+s] + Dp[nbf_s+r])*val;
                             Jp[nbf_q + p] += (Dp[nbf_r+s] + Dp[nbf_s+r])*val;
@@ -307,7 +312,7 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
                     {
                         for (int i = 0; i < nmat_K; i++)
                         {
-                            double const * const Dp = D[i]->get_pointer();
+                            double const * const Dp = Dptr[i];
                             double * const Kp = my_K + i*nbf2;
 
                             Kp[nbf_p + r] += Dp[nbf_q+s]*val;
