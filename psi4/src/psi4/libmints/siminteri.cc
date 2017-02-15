@@ -222,6 +222,9 @@ SimintTwoElectronInt::SimintTwoElectronInt(const IntegralFactory * integral, int
     else
         single_spairs_ket_ = create_shell_pair_(*shells3_, *shells4_);
 
+    simint_initialize_multi_shellpair(&P_);
+    simint_initialize_multi_shellpair(&Q_);
+
     create_blocks();
 }
 
@@ -253,6 +256,11 @@ SimintTwoElectronInt::SimintTwoElectronInt(const SimintTwoElectronInt & rhs)
     tformbuf_ = allwork_ + (rhs.tformbuf_ - rhs.allwork_);
     target_ = target_full_;
     source_ = source_full_;
+
+    // these are only expected to hold useful information
+    // inside a compute_** call
+    simint_initialize_multi_shellpair(&P_);
+    simint_initialize_multi_shellpair(&Q_);
 }
 
 SimintTwoElectronInt::~SimintTwoElectronInt()
@@ -260,6 +268,9 @@ SimintTwoElectronInt::~SimintTwoElectronInt()
     simint_finalize();
     SIMINT_FREE(allwork_);
     SIMINT_FREE(sharedwork_);
+
+    simint_free_multi_shellpair(&P_);
+    simint_free_multi_shellpair(&Q_);
 }
 
 
@@ -434,11 +445,6 @@ void SimintTwoElectronInt::compute_shell_blocks(const ShellPairBlock & vsh12,
 {
     ShellVec sv12, sv34;
 
-    simint_multi_shellpair P, Q;
-    simint_initialize_multi_shellpair(&P);
-    simint_initialize_multi_shellpair(&Q);
-
-
     std::vector<simint_shell> simint_shells;
         
     // Bra side
@@ -448,7 +454,7 @@ void SimintTwoElectronInt::compute_shell_blocks(const ShellPairBlock & vsh12,
         simint_shells.push_back((*shells2_)[s.second]);
     }
 
-    simint_create_multi_shellpair2(simint_shells.size()/2, simint_shells.data(), &P, SIMINT_SCREEN);
+    simint_create_multi_shellpair2(simint_shells.size()/2, simint_shells.data(), &P_, SIMINT_SCREEN);
     simint_shells.clear();
 
 
@@ -459,7 +465,7 @@ void SimintTwoElectronInt::compute_shell_blocks(const ShellPairBlock & vsh12,
         simint_shells.push_back((*shells4_)[s.second]);
     }
 
-    simint_create_multi_shellpair2(simint_shells.size()/2, simint_shells.data(), &Q, SIMINT_SCREEN);
+    simint_create_multi_shellpair2(simint_shells.size()/2, simint_shells.data(), &Q_, SIMINT_SCREEN);
     simint_shells.clear();
 
 
@@ -497,7 +503,7 @@ void SimintTwoElectronInt::compute_shell_blocks(const ShellPairBlock & vsh12,
     curr_buff_size_ = n1234;
 
     // Check that we have enough space now
-    size_t nshell1234 = P.nshell12 * Q.nshell12;
+    size_t nshell1234 = P_.nshell12 * Q_.nshell12;
 
     if(nshell1234 == 0)
         throw PSIEXCEPTION("No shells passed to calculate");
@@ -510,17 +516,17 @@ void SimintTwoElectronInt::compute_shell_blocks(const ShellPairBlock & vsh12,
     size_t ncomputed = 0;
 
     if(do_cart)
-        ncomputed = simint_compute_eri(&P, &Q, SIMINT_SCREEN_TOL, sharedwork_, target_);
+        ncomputed = simint_compute_eri(&P_, &Q_, SIMINT_SCREEN_TOL, sharedwork_, target_);
     else
     {
-        ncomputed = simint_compute_eri(&P, &Q, SIMINT_SCREEN_TOL, sharedwork_, source_);
+        ncomputed = simint_compute_eri(&P_, &Q_, SIMINT_SCREEN_TOL, sharedwork_, source_);
         if(!do_cart)
         {
-            for(int i = 0; i < P.nshell12; i++)
+            for(int i = 0; i < P_.nshell12; i++)
             {
                 auto sh12 = vsh12[i];
 
-                for(int j = 0; j < Q.nshell12; j++)
+                for(int j = 0; j < Q_.nshell12; j++)
                 {
                     auto sh34 = vsh34[j];
                     pure_transform(sh12.first, sh12.second,
@@ -532,9 +538,6 @@ void SimintTwoElectronInt::compute_shell_blocks(const ShellPairBlock & vsh12,
             }
         }
     }
-
-    simint_free_multi_shellpair(&P);
-    simint_free_multi_shellpair(&Q);
 }
 
 

@@ -84,6 +84,9 @@ class SimintTwoElectronInt : public TwoBodyAOInt
         std::shared_ptr<ShellPairVec> single_spairs_ket_;
         std::shared_ptr<ShellPairVec> multi_spairs_bra_;
         std::shared_ptr<ShellPairVec> multi_spairs_ket_;
+
+        // temporaries for use within compute_** calls
+        simint_multi_shellpair P_, Q_;
 };
 
 
