@@ -147,12 +147,6 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
                         std::vector<std::shared_ptr<Matrix> >& J,
                         std::vector<std::shared_ptr<Matrix> >& K)
 {
-
-    for (size_t ind = 0; ind < J.size(); ind++)
-        J[ind]->zero();
-    for (size_t ind = 0; ind < K.size(); ind++)
-        K[ind]->zero();
-
     const int nthread = ints.size();
     const size_t nbf = primary_->nbf();
     const size_t nbf2 = nbf * nbf;
@@ -168,7 +162,7 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
 
     // allocate and zero temporary workspaces
     std::unique_ptr<double[]> work(new double[worksize*nthread]);
-    double * const workptr = work.get();
+    double * workptr = work.get();
     memset(workptr, 0, worksize*nthread*sizeof(double));
 
 
@@ -323,31 +317,51 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
 
 
     // commit to the final matrix
+    // This does a quick and dirty tree reduction
+    size_t cthreads = nthread;
+    while(cthreads > 2)
+    {
+
+        #pragma omp parallel for num_threads(cthreads/2)
+        for(size_t i = 0; i < cthreads/2; i++)
+        {
+            double * const src = workptr + i*worksize;
+            double * const dest = workptr + (i+(cthreads/2))*worksize;
+
+            for(size_t n = 0; n < (nmat_J+nmat_K)*nbf2; n++)
+                dest[n] += src[n];
+        }
+        workptr += (cthreads/2)*worksize;
+        cthreads = (cthreads % 2 ? (cthreads/2+1) : (cthreads/2));
+    }
+
     if(do_J_)
     {
-        for(int t = 0; t < nthread; t++)
         for(int i = 0; i < nmat_J; i++)
         {
-            double * const my_J = workptr + t*worksize;
+            double const * const my_J1 = workptr;
+            double const * const my_J2 = workptr + worksize;
             double * const Jp = J[i]->get_pointer();
 
             for(size_t n = 0; n < nbf2; n++)
-                Jp[n] += my_J[n];
+                Jp[n] = my_J1[n] + my_J2[n];
         }
     }
 
     if(do_K_)
     {
-        for(int t = 0; t < nthread; t++)
         for(int i = 0; i < nmat_K; i++)
         {
-            double * const my_K = workptr + t*worksize + worksize_J;
+            double const * const my_K1 = workptr + worksize_J;
+            double const * const my_K2 = workptr + worksize + worksize_J;
             double * const Kp = K[i]->get_pointer();
 
             for(size_t n = 0; n < nbf2; n++)
-                Kp[n] += my_K[n];
+                Kp[n] = my_K1[n] + my_K2[n];
         }
     }
+
+
 
 #if 0
     // => Sizing <= //
