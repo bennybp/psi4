@@ -445,29 +445,40 @@ void SimintTwoElectronInt::compute_shell_blocks(const ShellPairBlock & vsh12,
 {
     ShellVec sv12, sv34;
 
-    std::vector<simint_shell> simint_shells;
+    std::vector<const simint_multi_shellpair *> simint_shells;
+    simint_shells.reserve(std::max(vsh12.size(), vsh34.size()));
+
+    const auto nsh2 = original_bs2_->nshell();
+    const auto nsh4 = original_bs4_->nshell();
         
     // Bra side
     for(const auto & s : vsh12)
     {
-        simint_shells.push_back((*shells1_)[s.first]);
-        simint_shells.push_back((*shells2_)[s.second]);
+        int sh1 = s.first;
+        int sh2 = s.second;
+        simint_multi_shellpair * P = &(*single_spairs_bra_)[sh1*nsh2 + sh2];
+        simint_shells.push_back(P);
     }
 
-    simint_create_multi_shellpair2(simint_shells.size()/2, simint_shells.data(), &P_, SIMINT_SCREEN);
+    simint_cat_multi_shellpair(static_cast<int>(simint_shells.size()),
+                               simint_shells.data(),
+                               &P_, SIMINT_SCREEN);
+
     simint_shells.clear();
 
 
     // Ket side
     for(const auto & s : vsh34)
     {
-        simint_shells.push_back((*shells3_)[s.first]);
-        simint_shells.push_back((*shells4_)[s.second]);
+        int sh3 = s.first;
+        int sh4 = s.second;
+        simint_multi_shellpair * Q = &(*single_spairs_bra_)[sh3*nsh4 + sh4];
+        simint_shells.push_back(Q);
     }
 
-    simint_create_multi_shellpair2(simint_shells.size()/2, simint_shells.data(), &Q_, SIMINT_SCREEN);
-    simint_shells.clear();
-
+    simint_cat_multi_shellpair(static_cast<int>(simint_shells.size()),
+                               simint_shells.data(),
+                               &Q_, SIMINT_SCREEN);
 
     // Now actually calculate
     // set the pointers to the beginning of the work spaces

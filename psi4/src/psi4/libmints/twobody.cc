@@ -214,7 +214,62 @@ void TwoBodyAOInt::compute_shell_blocks(int shellpair12, int shellpair34,
 void
 TwoBodyAOInt::compute_shell_blocks(const ShellPairBlock & vsh12, const ShellPairBlock & vsh34)
 {
-    throw PSIEXCEPTION("NYI");
+    // Default implementation - go through the blocks and do each quartet
+    // one at a time
+
+    // reset the target & source pointers
+    target_ = target_full_;
+    source_ = source_full_;
+
+    for(const auto sh12 : vsh12)
+    {
+        const auto & shell1 = original_bs1_->shell(sh12.first);
+        const auto & shell2 = original_bs2_->shell(sh12.second);
+   
+        int n1, n2;
+        if (force_cartesian_)
+        {
+            n1 = shell1.ncartesian();
+            n2 = shell2.ncartesian();
+        }
+        else
+        {
+            n1 = shell1.nfunction();
+            n2 = shell2.nfunction();
+        }
+
+
+        for(const auto sh34 : vsh34)
+        {
+            const auto & shell3 = original_bs3_->shell(sh34.first);
+            const auto & shell4 = original_bs4_->shell(sh34.second);
+
+            int n3, n4;
+            if (force_cartesian_)
+            {
+                n3 = shell3.ncartesian();
+                n4 = shell4.ncartesian();
+            }
+            else
+            {
+                n3 = shell3.nfunction();
+                n4 = shell4.nfunction();
+            }
+
+            const int n1234 = n1 * n2 * n3 * n4;
+
+            // actually compute the eri
+            // this will put the results in target_
+            auto ret = compute_shell(sh12.first, sh12.second,
+                                     sh34.first, sh34.second);
+
+            // advance the target pointer
+            target_ += n1234; 
+            
+            // Since we are only doing one at a time we don't need to
+            // move the source_ pointer
+        }
+    }
 }
 
 void TwoBodyAOInt::normalize_am(std::shared_ptr<GaussianShell> s1, std::shared_ptr<GaussianShell> s2, std::shared_ptr<GaussianShell> s3, std::shared_ptr<GaussianShell> s4, int nchunk)

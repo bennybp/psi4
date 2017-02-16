@@ -1858,14 +1858,14 @@ TwoElectronInt::TwoElectronInt(const IntegralFactory *integral, int deriv, bool 
     size *= ntypes[deriv_];
 
     try {
-        target_full_ = new double[size];
+        target_full_ = new double[size * 32];
         target_ = target_full_;
     }
     catch (std::bad_alloc &e) {
         outfile->Printf("Error allocating target_.\n%s\n", e.what());
         exit(EXIT_FAILURE);
     }
-    memset(target_, 0, sizeof(double) * size);
+    memset(target_full_, 0, sizeof(double) * size * 32);
 
     try {
         source_full_ = new double[size];
