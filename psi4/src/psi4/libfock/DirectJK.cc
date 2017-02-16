@@ -235,7 +235,7 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
                           && sieve_->shell_significant(P,Q,R,S))
                 {
                     blk.push_back({R, S});
-                    if(blk.size() == 32)
+                    if(blk.size() == 16)
                     {
                         RS_blocks.push_back(blk);
                         blk.clear();
@@ -302,9 +302,9 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
                             double const * const Dp = Dptr[i];
                             double * const Jp = my_J + i*nbf2;
                             Jp[nbf_p + q] += (Dp[nbf_r+s] + Dp[nbf_s+r])*val;
-                            Jp[nbf_q + p] += (Dp[nbf_r+s] + Dp[nbf_s+r])*val;
                             Jp[nbf_r + s] += (Dp[nbf_p+q] + Dp[nbf_q+p])*val;
-                            Jp[nbf_s + r] += (Dp[nbf_p+q] + Dp[nbf_q+p])*val;
+                            //Jp[nbf_s + r] += (Dp[nbf_p+q] + Dp[nbf_q+p])*val;
+                            //Jp[nbf_q + p] += (Dp[nbf_r+s] + Dp[nbf_s+r])*val;
                         }
                     }
 
@@ -316,14 +316,17 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
                             double * const Kp = my_K + i*nbf2;
 
                             Kp[nbf_p + r] += Dp[nbf_q+s]*val;
-                            Kp[nbf_q + r] += Dp[nbf_p+s]*val;
                             Kp[nbf_p + s] += Dp[nbf_q+r]*val;
+                            Kp[nbf_q + r] += Dp[nbf_p+s]*val;
                             Kp[nbf_q + s] += Dp[nbf_p+r]*val;
 
-                            Kp[nbf_r + p] += Dp[nbf_s+q]*val;
-                            Kp[nbf_s + p] += Dp[nbf_r+q]*val;
-                            Kp[nbf_r + q] += Dp[nbf_s+p]*val;
-                            Kp[nbf_s + q] += Dp[nbf_r+p]*val;
+                            if (!lr_symmetric_)
+                            {
+                                Kp[nbf_r + p] += Dp[nbf_s+q]*val;
+                                Kp[nbf_s + p] += Dp[nbf_r+q]*val;
+                                Kp[nbf_r + q] += Dp[nbf_s+p]*val;
+                                Kp[nbf_s + q] += Dp[nbf_r+p]*val;
+                            }
                         }
                     }
                 }
@@ -367,7 +370,9 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
                 double * const Jp = J[i]->get_pointer();
 
                 for(size_t n = 0; n < nbf2; n++)
-                    Jp[n] = my_J1[n] + my_J2[n];
+                    Jp[n] = 2.0 * (my_J1[n] + my_J2[n]);
+
+                J[i]->hermitivitize();
             }
         }
 
@@ -381,6 +386,12 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
 
                 for(size_t n = 0; n < nbf2; n++)
                     Kp[n] = my_K1[n] + my_K2[n];
+
+                if (lr_symmetric_)
+                {
+                    K[i]->scale(2.0);
+                    K[i]->hermitivitize();
+                }
             }
         }
     }
@@ -393,6 +404,9 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
                 double const * const my_J = workptr + i*worksize;
                 double * const Jp = J[i]->get_pointer();
                 memcpy(Jp, my_J, nbf2 * sizeof(double)); 
+
+                J[i]->scale(2.0);
+                J[i]->hermitivitize();
             }
         }
 
@@ -403,6 +417,12 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
                 double const * const my_K = workptr + i*worksize + worksize_J;
                 double * const Kp = K[i]->get_pointer();
                 memcpy(Kp, my_K, nbf2 * sizeof(double)); 
+
+                if (lr_symmetric_)
+                {
+                    K[i]->scale(2.0);
+                    K[i]->hermitivitize();
+                }
             }
         }
     }
