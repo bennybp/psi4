@@ -202,3 +202,10 @@ if(ENABLE_PCMSolver)
     add_subdirectory(pcmsolver)
     message(STATUS "Adding test cases: Psi4 + PCMSolver")
 endif()
+
+# <<<  SIMINT  >>>
+
+if(ENABLE_simint)
+    add_subdirectory(simint)
+    message(STATUS "Adding test cases: Psi4 + simint")
+endif()
