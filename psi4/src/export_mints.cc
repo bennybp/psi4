@@ -742,6 +742,7 @@ void export_mints(py::module& m)
             def("geometry", &Molecule::geometry, "Gets the geometry as a (Natom X 3) matrix of coordinates (in Bohr)");
 
     py::class_<PetiteList, std::shared_ptr<PetiteList>>(m, "PetiteList", "docstring").
+            def(py::init<const std::shared_ptr<BasisSet>&, const std::shared_ptr<IntegralFactory>&, bool>()).
             def("aotoso", &PetiteList::aotoso, "docstring").
             def("sotoao", &PetiteList::sotoao, "docstring").
             def("print", &PetiteList::print, "docstring");

@@ -78,7 +78,7 @@
 #include "psi4/libparallel/ParallelPrinter.h"
 /* guess for HZ, if missing */
 #ifndef HZ
-#error Need HZ
+#define HZ 100
 #endif
 
 #define TIMER_KEYLEN 128
