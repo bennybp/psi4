@@ -336,8 +336,8 @@ size_t SimintTwoElectronInt::compute_shell(int sh1, int sh2, int sh3, int sh4)
     curr_buff_size_ = n1 * n2 * n3 * n4;
 
     // get the precomputed simint_multi_shellpair
-    simint_multi_shellpair * P = &(*single_spairs_bra_)[sh1*nsh2 + sh2];
-    simint_multi_shellpair * Q = &(*single_spairs_ket_)[sh3*nsh4 + sh4];
+    const simint_multi_shellpair * P = &(*single_spairs_bra_)[sh1*nsh2 + sh2];
+    const simint_multi_shellpair * Q = &(*single_spairs_ket_)[sh3*nsh4 + sh4];
 
     // actually compute
     // if we are doing cartesian, put directly in target. Otherwise, put in source
@@ -466,7 +466,7 @@ void SimintTwoElectronInt::compute_shell_blocks(const ShellPairBlock & vsh12,
     {
         int sh1 = s.first;
         int sh2 = s.second;
-        simint_multi_shellpair * P = &(*single_spairs_bra_)[sh1*nsh2 + sh2];
+        const simint_multi_shellpair * P = &(*single_spairs_bra_)[sh1*nsh2 + sh2];
         simint_shells.push_back(P);
     }
 
@@ -482,7 +482,7 @@ void SimintTwoElectronInt::compute_shell_blocks(const ShellPairBlock & vsh12,
     {
         int sh3 = s.first;
         int sh4 = s.second;
-        simint_multi_shellpair * Q = &(*single_spairs_bra_)[sh3*nsh4 + sh4];
+        const simint_multi_shellpair * Q = &(*single_spairs_bra_)[sh3*nsh4 + sh4];
         simint_shells.push_back(Q);
     }
 
