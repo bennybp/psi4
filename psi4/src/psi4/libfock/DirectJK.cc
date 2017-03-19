@@ -137,7 +137,6 @@ void DirectJK::compute_JK()
             build_JK(ints,D_ao_,temp,K_ao_);
         }
     }
-
 }
 void DirectJK::postiterations()
 {
@@ -148,15 +147,289 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
                         std::vector<std::shared_ptr<Matrix> >& J,
                         std::vector<std::shared_ptr<Matrix> >& K)
 {
-    // => Zeroing <= //
+    const int nthread = ints.size();
+    const size_t nshell = primary_->nshell();
+    const int maxam = primary_->max_am();
+    const size_t nbf = primary_->nbf();
+    const size_t nbf2 = nbf * nbf;
+    const size_t nmat_J = ( do_J_ ? J.size() : 0 );
+    const size_t nmat_K = ( do_K_ ? K.size() : 0 );
 
-    for (size_t ind = 0; ind < J.size(); ind++) {
-        J[ind]->zero();
-    }
-    for (size_t ind = 0; ind < K.size(); ind++) {
-        K[ind]->zero();
+    const size_t worksize_J = ( do_J_ ? nbf2 : 0 );
+    const size_t worksize_K = ( do_K_ ? nbf2 : 0 );
+    const size_t worksize = worksize_J + worksize_K;
+
+    // allocate and zero temporary workspaces
+    std::unique_ptr<double[]> work(new double[worksize*nthread]);
+    double * workptr = work.get();
+    memset(workptr, 0, worksize*nthread*sizeof(double));
+
+
+    // create PQ blocks
+    // only one block per batch
+    std::vector<ShellPairBlock> PQ_blocks;
+
+    for(int P = 0; P < nshell; P++)
+    for(int Q = 0; Q <= P; Q++)
+    {
+        if(sieve_->shell_pair_significant(P, Q))
+            PQ_blocks.push_back({{P, Q}});
     }
 
+    // sort shells by am
+    std::vector<std::vector<int>> sorted_shells(maxam+1);
+    for(int P = 0; P < nshell; P++)
+        sorted_shells[primary_->shell(P).am()].push_back(P);
+
+    const size_t nblocks_PQ = PQ_blocks.size();
+
+    // pull these out to prevent many get_pointer() calls
+    double * Dptr[D.size()];
+    for(size_t i = 0; i < D.size(); i++)
+        Dptr[i] = D[i]->get_pointer();
+
+    #pragma omp parallel for num_threads(nthread) schedule(guided)
+    for (int PQblock_idx = 0; PQblock_idx < nblocks_PQ; ++PQblock_idx)
+    {
+        #ifdef _OPENMP
+            const int thread = omp_get_thread_num();
+        #else
+            const int thread = 0;
+        #endif
+
+        double * const mywork = workptr + thread*worksize;
+        double * const my_J = mywork;
+        double * const my_K = mywork + worksize_J;
+
+        const auto & PQblock = PQ_blocks[PQblock_idx];
+
+        const int P = PQblock[0].first;
+        const int Q = PQblock[0].second;
+        const auto & shellP = primary_->shell(P);
+        const auto & shellQ = primary_->shell(Q);
+        const int nP = shellP.nfunction();
+        const int nQ = shellQ.nfunction();
+        const int Pstart = shellP.function_index();
+        const int Qstart = shellQ.function_index();
+        const int Pend = Pstart + nP;
+        const int Qend = Qstart + nQ;
+        const int PQ = (P*(P+1))/2 + Q;
+
+        // generate the batches for RS
+        std::vector<ShellPairBlock> RS_blocks;
+
+        for(int am1 = 0; am1 <= maxam; am1++)
+        for(int am2 = 0; am2 <= maxam; am2++)
+        {
+            ShellPairBlock blk;
+
+            for(size_t i = 0; i < sorted_shells[am1].size(); i++)
+            for(size_t j = 0; j < sorted_shells[am2].size(); j++)
+            {
+                int R = sorted_shells[am1][i];
+                int S = sorted_shells[am2][j];
+
+                const int RS = (R*(R+1))/2 + S;
+                if(S <= R && RS <= PQ
+                          && sieve_->shell_pair_significant(R, S)
+                          && sieve_->shell_significant(P,Q,R,S))
+                {
+                    blk.push_back({R, S});
+                    if(blk.size() == 16)
+                    {
+                        RS_blocks.push_back(blk);
+                        blk.clear();
+                    }
+                }
+            }
+
+            if(blk.size())
+                RS_blocks.push_back(std::move(blk));
+        }
+
+        const size_t nblocks_RS = RS_blocks.size();
+
+
+        for (int RSblock_idx = 0; RSblock_idx < nblocks_RS; ++RSblock_idx)
+        {
+            const auto & RSblock = RS_blocks[RSblock_idx];
+            const size_t nRS = RSblock.size();
+
+            // compute the blocks
+            ints[thread]->compute_shell_blocks(PQblock, RSblock);
+            const double * buffer = ints[thread]->buffer();
+
+            for(size_t RS_idx = 0; RS_idx < nRS; RS_idx++)
+            {
+                // unpack what indices we are doing
+                const int R = RSblock[RS_idx].first;
+                const int S = RSblock[RS_idx].second;
+
+                const auto & shellR = primary_->shell(R);
+                const auto & shellS = primary_->shell(S);
+                const int nR = shellR.nfunction();
+                const int nS = shellS.nfunction();
+                const int Rstart = shellR.function_index();
+                const int Sstart = shellS.function_index();
+                const int Rend = Rstart + nR;
+                const int Send = Sstart + nS;
+                const int RS = (R*(R+1))/2 + S;
+
+                double fac = 1.0;
+                if(P == Q) fac *= 0.5;
+                if(R == S) fac *= 0.5;
+                if(PQ == RS) fac *= 0.5;
+
+                for (int p = Pstart, index = 0; p < Pend; p++)
+                for (int q = Qstart           ; q < Qend; q++)
+                for (int r = Rstart           ; r < Rend; r++)
+                for (int s = Sstart           ; s < Send; s++, index++)
+                {
+                    const int pq = (p*(p+1))/2 + q;
+                    const int rs = (r*(r+1))/2 + s;
+
+                    const int nbf_p = p*nbf;
+                    const int nbf_q = q*nbf;
+                    const int nbf_r = r*nbf;
+                    const int nbf_s = s*nbf;
+
+                    double val = fac*buffer[index];
+
+                    if (do_J_)
+                    {
+                        for (int i = 0; i < nmat_J; i++)
+                        {
+                            double const * const Dp = Dptr[i];
+                            double * const Jp = my_J + i*nbf2;
+                            Jp[nbf_p + q] += (Dp[nbf_r+s] + Dp[nbf_s+r])*val;
+                            Jp[nbf_r + s] += (Dp[nbf_p+q] + Dp[nbf_q+p])*val;
+                            //Jp[nbf_s + r] += (Dp[nbf_p+q] + Dp[nbf_q+p])*val;
+                            //Jp[nbf_q + p] += (Dp[nbf_r+s] + Dp[nbf_s+r])*val;
+                        }
+                    }
+
+                    if (do_K_)
+                    {
+                        for (int i = 0; i < nmat_K; i++)
+                        {
+                            double const * const Dp = Dptr[i];
+                            double * const Kp = my_K + i*nbf2;
+
+                            Kp[nbf_p + r] += Dp[nbf_q+s]*val;
+                            Kp[nbf_p + s] += Dp[nbf_q+r]*val;
+                            Kp[nbf_q + r] += Dp[nbf_p+s]*val;
+                            Kp[nbf_q + s] += Dp[nbf_p+r]*val;
+
+                            if (!lr_symmetric_)
+                            {
+                                Kp[nbf_r + p] += Dp[nbf_s+q]*val;
+                                Kp[nbf_s + p] += Dp[nbf_r+q]*val;
+                                Kp[nbf_r + q] += Dp[nbf_s+p]*val;
+                                Kp[nbf_s + q] += Dp[nbf_r+p]*val;
+                            }
+                        }
+                    }
+                }
+
+                buffer += nP*nQ*nR*nS;
+
+            }
+        }
+    }
+
+
+    // commit to the final matrix
+    // This does a quick and dirty tree reduction. The matrices
+    // accumulate at the end of the workspace
+    if(nthread > 1)
+    {
+        size_t cthreads = nthread;
+        while(cthreads > 2)
+        {
+
+            #pragma omp parallel for num_threads(cthreads/2)
+            for(size_t i = 0; i < cthreads/2; i++)
+            {
+                double * const src = workptr + i*worksize;
+                double * const dest = workptr + (i+(cthreads/2))*worksize;
+
+                for(size_t n = 0; n < (nmat_J+nmat_K)*nbf2; n++)
+                    dest[n] += src[n];
+            }
+            workptr += (cthreads/2)*worksize;
+            cthreads = (cthreads % 2 ? (cthreads/2+1) : (cthreads/2));
+        }
+
+        // we now have two left. Sum them into their final destination
+        if(do_J_)
+        {
+            for(int i = 0; i < nmat_J; i++)
+            {
+                double const * const my_J1 = workptr;
+                double const * const my_J2 = workptr + worksize;
+                double * const Jp = J[i]->get_pointer();
+
+                for(size_t n = 0; n < nbf2; n++)
+                    Jp[n] = 2.0 * (my_J1[n] + my_J2[n]);
+
+                J[i]->hermitivitize();
+            }
+        }
+
+        if(do_K_)
+        {
+            for(int i = 0; i < nmat_K; i++)
+            {
+                double const * const my_K1 = workptr + worksize_J;
+                double const * const my_K2 = workptr + worksize + worksize_J;
+                double * const Kp = K[i]->get_pointer();
+
+                for(size_t n = 0; n < nbf2; n++)
+                    Kp[n] = my_K1[n] + my_K2[n];
+
+                if (lr_symmetric_)
+                {
+                    K[i]->scale(2.0);
+                    K[i]->hermitivitize();
+                }
+            }
+        }
+    }
+    else
+    {
+        if(do_J_)
+        {
+            for(int i = 0; i < nmat_J; i++)
+            {
+                double const * const my_J = workptr + i*worksize;
+                double * const Jp = J[i]->get_pointer();
+                memcpy(Jp, my_J, nbf2 * sizeof(double)); 
+
+                J[i]->scale(2.0);
+                J[i]->hermitivitize();
+            }
+        }
+
+        if(do_K_)
+        {
+            for(int i = 0; i < nmat_K; i++)
+            {
+                double const * const my_K = workptr + i*worksize + worksize_J;
+                double * const Kp = K[i]->get_pointer();
+                memcpy(Kp, my_K, nbf2 * sizeof(double)); 
+
+                if (lr_symmetric_)
+                {
+                    K[i]->scale(2.0);
+                    K[i]->hermitivitize();
+                }
+            }
+        }
+    }
+
+
+
+#if 0
     // => Sizing <= //
 
     int nshell  = primary_->nshell();
@@ -582,6 +855,7 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints,
         size_t possible_shells = ntri * (ntri + 1L) / 2L;
         printer->Printf( "Computed %20zu Shell Quartets out of %20zu, (%11.3E ratio)\n", computed_shells, possible_shells, computed_shells / (double) possible_shells);
     }
+#endif
 }
 
 #if 0
