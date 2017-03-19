@@ -32,6 +32,7 @@
 #include "psi4/libmints/wavefunction.h"   // for df
 #include "psi4/libmints/osrecur.h"
 #include "psi4/libpsi4util/exception.h"
+#include "psi4/psi4-dec.h"
 
 using namespace psi;
 
@@ -245,9 +246,6 @@ void ObaraSaikaTwoCenterEFPRecursion::compute(double PA[3], double PB[3], double
     // U from A21
     double u = zeta * (PC[0] * PC[0] + PC[1] * PC[1] + PC[2] * PC[2]);
     double F[mmax+1];
-
-    // Zero out F
-    memset(F, 0, sizeof(double) * (mmax+1));
 
     // Form Fm(U) from A20
     boys_.calculate(F, mmax, u);
@@ -914,6 +912,8 @@ void ObaraSaikaTwoCenterVIRecursion::compute(double PA[3], double PB[3], double 
 
     // Form Fm(U) from A20
     boys_.calculate(F, mmax, u);
+    //outfile->Printf("BP: x = %20.18e F0 = %20.18e\n", u, F[0]);
+
 
     // Think we're having problems with values being left over.
     //zero_box(vi_, size_, size_, mmax + 1);
@@ -1225,9 +1225,6 @@ void ObaraSaikaTwoCenterVIDerivRecursion::compute(double PA[3], double PB[3], do
     double u = zeta * (PC[0] * PC[0] + PC[1] * PC[1] + PC[2] * PC[2]);
     double F[mmax+1];
 
-    // Zero out F
-    memset(F, 0, sizeof(double) * (mmax+1));
-
     // Form Fm(U) from A20
     boys_.calculate(F, mmax, u);
 
@@ -1474,9 +1471,6 @@ void ObaraSaikaTwoCenterVIDeriv2Recursion::compute(double PA[3], double PB[3], d
     // U from A21
     double u = zeta * (PC[0] * PC[0] + PC[1] * PC[1] + PC[2] * PC[2]);
     double F[mmax+1];
-
-    // Zero out F
-    memset(F, 0, sizeof(double) * (mmax+1));
 
     // Form Fm(U) from A20
     boys_.calculate(F, mmax, u);
@@ -1848,9 +1842,6 @@ void ObaraSaikaTwoCenterElectricField::compute(double PA[3], double PB[3], doubl
     // U from A21
     double u = zeta * (PC[0] * PC[0] + PC[1] * PC[1] + PC[2] * PC[2]);
     double F[mmax+1];
-
-    // Zero out F
-    memset(F, 0, sizeof(double) * (mmax+1));
 
     // Form Fm(U) from A20
     boys_.calculate(F, mmax, u);

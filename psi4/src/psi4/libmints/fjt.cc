@@ -58,6 +58,9 @@
 #include "wavefunction.h"
 #include "integralparameters.h"
 #include "psi4/psi4-dec.h"
+
+#define INTERP_ORDER 7
+
 using namespace psi;
 using namespace std;
 
@@ -75,7 +78,7 @@ int psi::Split_Fjt::ncol_ = 0;
 // t = T in other code
 void calculate_f(double * F, int n, double t)
 {
-    const double eps = 1e-17;
+    const double eps = 1e-20;
 
     // K = sqrt(pi) / 2
     const double K = 0.88622692545275801364908374167057259139877472806;
@@ -83,6 +86,7 @@ void calculate_f(double * F, int n, double t)
     const double t2 = 2*t;
     const double et = exp(-t);
 
+    /*
     if (t > 20.0)
     {
         // Start with n = 0 and use upward recursion
@@ -93,31 +97,32 @@ void calculate_f(double * F, int n, double t)
     }
     else
     {
-        /* For smaller t's compute F with highest n using
-           asymptotic series (see I. Shavitt in
-           Methods in Computational Physics, ed. B. Alder et al,
-           vol 2, 1963, page 8) */
+    */
 
-        const int n2 = 2*n;
-        double num = df[n2];
-        double den = df[n2+2];
-        int i = 0;
-        double sum = 1.0/(n2+1);
-        double term = 0.0;
+    /* For smaller t's compute F with highest n using
+       asymptotic series (see I. Shavitt in
+       Methods in Computational Physics, ed. B. Alder et al,
+       vol 2, 1963, page 8) */
 
-        do {
-            i++;
-            num *= t2;
-            den *= (n2+2*i+1);
-            term = num/den;
-            sum += term;
-        } while (fabs(term) > eps);
-        F[n] = sum*et;
+    const int n2 = 2*n;
+    double num = df[n2];
+    double den = df[n2+2];
+    int i = 0;
+    double sum = 1.0/(n2+1);
+    double term = 0.0;
 
-        // downward recursion
-        for(int m = n-1; m >= 0; m--)
-            F[m] = (t2*F[m+1] + et)/(2*m+1);
-    }
+    do {
+        i++;
+        num *= t2;
+        den *= (n2+2*i+1);
+        term = num/den;
+        sum += term;
+    } while (fabs(term) > eps);
+    F[n] = sum*et;
+
+    // downward recursion
+    for(int m = n-1; m >= 0; m--)
+        F[m] = (t2*F[m+1] + et)/(2*m+1);
 }
 
 
@@ -136,7 +141,7 @@ Split_Fjt::Split_Fjt(unsigned int maxJ)
         max_J_ = maxJ;
 
         nrow_ = max_T_+1;
-        ncol_ = max_J_+8+1;  // +8 for the higher orders required by the taylor series
+        ncol_ = max_J_+INTERP_ORDER+1+1;  // for the higher orders required by the taylor series
         grid_ = std::unique_ptr<double[]>(new double[nrow_ * ncol_]);
 
         for(int i = 0; i <= max_T_; i++) 
@@ -148,7 +153,7 @@ Split_Fjt::Split_Fjt(unsigned int maxJ)
             double * gridpt = grid_.get() + i*ncol_;
 
             // Fill in all the values for this row
-            calculate_f(gridpt, max_J_+8, Tval);
+            calculate_f(gridpt, max_J_+INTERP_ORDER+1, Tval);
         }
     }
 }
