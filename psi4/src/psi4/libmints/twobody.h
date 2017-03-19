@@ -181,6 +181,9 @@ public:
     compute_shell_blocks(int shellpair12, int shellpair34,
                          int npair12 = -1, int npair34 = -1);
 
+    virtual void
+    compute_shell_blocks(const ShellPairBlock & vsh12, const ShellPairBlock & vsh34);
+
     /// Is the shell zero?
     virtual int shell_is_zero(int,int,int,int) { return 0; }
 
