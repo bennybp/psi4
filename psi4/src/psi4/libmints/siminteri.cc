@@ -230,6 +230,9 @@ SimintTwoElectronInt::SimintTwoElectronInt(const IntegralFactory * integral, int
     else
         single_spairs_ket_ = create_shell_pair_(*shells3_, *shells4_);
 
+    simint_initialize_multi_shellpair(&P_);
+    simint_initialize_multi_shellpair(&Q_);
+
     create_blocks();
 }
 
@@ -333,8 +336,8 @@ size_t SimintTwoElectronInt::compute_shell(int sh1, int sh2, int sh3, int sh4)
     curr_buff_size_ = n1 * n2 * n3 * n4;
 
     // get the precomputed simint_multi_shellpair
-    simint_multi_shellpair P = (*single_spairs_bra_)[sh1*nsh2 + sh2];
-    simint_multi_shellpair Q = (*single_spairs_ket_)[sh3*nsh4 + sh4];
+    simint_multi_shellpair * P = &(*single_spairs_bra_)[sh1*nsh2 + sh2];
+    simint_multi_shellpair * Q = &(*single_spairs_ket_)[sh3*nsh4 + sh4];
 
     // actually compute
     // if we are doing cartesian, put directly in target. Otherwise, put in source
@@ -532,9 +535,6 @@ void SimintTwoElectronInt::compute_shell_blocks(const ShellPairBlock & vsh12,
     // if we are doing cartesian, put directly in target. Otherwise, put in source
     // and let pure_transform put it in target
     size_t ncomputed = 0;
-
-    if(do_cart)
-        P_.sph = Q_.sph = 0; // in case it's forced
 
     ncomputed = simint_compute_eri(&P_, &Q_, SIMINT_SCREEN_TOL, sharedwork_, target_);
 }
