@@ -1797,6 +1797,8 @@ TwoElectronInt::TwoElectronInt(const IntegralFactory *integral, int deriv, bool 
     if (deriv_)
         init_libderiv_base();
 
+    batchsize_ = 16;
+
     // Figure out some information to initialize libint/libderiv with
     // 1. Maximum angular momentum
     int max_am = MAX(MAX(basis1()->max_am(), basis2()->max_am()), MAX(basis3()->max_am(), basis4()->max_am()));
@@ -1858,7 +1860,7 @@ TwoElectronInt::TwoElectronInt(const IntegralFactory *integral, int deriv, bool 
     size *= ntypes[deriv_];
 
     try {
-        target_full_ = new double[size];
+        target_full_ = new double[batchsize_ * size];
         target_ = target_full_;
     }
     catch (std::bad_alloc &e) {

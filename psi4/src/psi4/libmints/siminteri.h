@@ -53,6 +53,10 @@ class SimintTwoElectronInt : public TwoBodyAOInt
         compute_shell_blocks(int shellpair1, int shellpair2,
                              int npair1 = -1, int npair2 = -1) override;
 
+        virtual void
+        compute_shell_blocks(const ShellPairBlock & vsh12,
+                             const ShellPairBlock & vsh34) override;
+
         virtual size_t compute_shell_deriv1(int, int, int, int);
 
         virtual size_t compute_shell_deriv2(int, int, int, int);
@@ -86,7 +90,8 @@ class SimintTwoElectronInt : public TwoBodyAOInt
         std::shared_ptr<const ShellPairVec> multi_spairs_bra_;
         std::shared_ptr<const ShellPairVec> multi_spairs_ket_;
 
-
+        // temporaries for use within compute_** calls
+        simint_multi_shellpair P_, Q_;
 };
 
 

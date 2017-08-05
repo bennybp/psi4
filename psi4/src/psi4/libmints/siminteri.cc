@@ -174,7 +174,7 @@ SimintTwoElectronInt::SimintTwoElectronInt(const IntegralFactory * integral, int
     // It is safe to call this multiple times (it is only thread unsafe)
     simint_init();
 
-    batchsize_ = 32;
+    batchsize_ = 16;
 
     size_t size = INT_NCART(basis1()->max_am()) * INT_NCART(basis2()->max_am()) *
                   INT_NCART(basis3()->max_am()) * INT_NCART(basis4()->max_am());
@@ -231,6 +231,11 @@ SimintTwoElectronInt::SimintTwoElectronInt(const IntegralFactory * integral, int
         single_spairs_ket_ = create_shell_pair_(*shells3_, *shells4_);
 
     create_blocks();
+
+    // these are only expected to hold useful information
+    // inside a compute_** call
+    simint_initialize_multi_shellpair(&P_);
+    simint_initialize_multi_shellpair(&Q_);
 }
 
 SimintTwoElectronInt::SimintTwoElectronInt(const SimintTwoElectronInt & rhs)
@@ -263,6 +268,11 @@ SimintTwoElectronInt::SimintTwoElectronInt(const SimintTwoElectronInt & rhs)
     tformbuf_ = allwork_ + (rhs.tformbuf_ - rhs.allwork_);
     target_ = target_full_;
     source_ = source_full_;
+
+    // these are only expected to hold useful information
+    // inside a compute_** call
+    simint_initialize_multi_shellpair(&P_);
+    simint_initialize_multi_shellpair(&Q_);
 }
 
 SimintTwoElectronInt::~SimintTwoElectronInt()
@@ -270,6 +280,9 @@ SimintTwoElectronInt::~SimintTwoElectronInt()
     simint_finalize();
     SIMINT_FREE(allwork_);
     SIMINT_FREE(sharedwork_);
+
+    simint_free_multi_shellpair(&P_);
+    simint_free_multi_shellpair(&Q_);
 }
 
 
@@ -437,6 +450,117 @@ SimintTwoElectronInt::compute_shell_blocks(int shellpair1, int shellpair2,
         }
     }
 }
+
+
+void SimintTwoElectronInt::compute_shell_blocks(const ShellPairBlock & vsh12,
+                                                const ShellPairBlock & vsh34)
+{
+    ShellVec sv12, sv34;
+
+    std::vector<const simint_multi_shellpair *> simint_shells;
+    simint_shells.reserve(std::max(vsh12.size(), vsh34.size()));
+
+    const auto nsh2 = original_bs2_->nshell();
+    const auto nsh4 = original_bs4_->nshell();
+        
+    // Bra side
+    for(const auto & s : vsh12)
+    {
+        int sh1 = s.first;
+        int sh2 = s.second;
+        const simint_multi_shellpair * P = &(*single_spairs_bra_)[sh1*nsh2 + sh2];
+        simint_shells.push_back(P);
+    }
+
+    simint_cat_multi_shellpair(static_cast<int>(simint_shells.size()),
+                               simint_shells.data(),
+                               &P_, SIMINT_SCREEN);
+
+    simint_shells.clear();
+
+
+    // Ket side
+    for(const auto & s : vsh34)
+    {
+        int sh3 = s.first;
+        int sh4 = s.second;
+        const simint_multi_shellpair * Q = &(*single_spairs_bra_)[sh3*nsh4 + sh4];
+        simint_shells.push_back(Q);
+    }
+
+    simint_cat_multi_shellpair(static_cast<int>(simint_shells.size()),
+                               simint_shells.data(),
+                               &Q_, SIMINT_SCREEN);
+
+    // Now actually calculate
+    // set the pointers to the beginning of the work spaces
+    target_ = target_full_;
+    source_ = source_full_;
+
+    // get the basic info
+    std::pair<int, int> sh12 = *vsh12.begin();
+    std::pair<int, int> sh34 = *vsh34.begin();
+
+    const auto & shell1 = original_bs1_->shell(sh12.first);
+    const auto & shell2 = original_bs2_->shell(sh12.second);
+    const auto & shell3 = original_bs3_->shell(sh34.first);
+    const auto & shell4 = original_bs4_->shell(sh34.second);
+
+    bool do_cart = force_cartesian_ || (shell1.is_cartesian() &&
+                                        shell2.is_cartesian() &&
+                                        shell3.is_cartesian() &&
+                                        shell4.is_cartesian());
+
+
+    const int ncart1 = shell1.ncartesian();
+    const int ncart2 = shell2.ncartesian();
+    const int ncart3 = shell3.ncartesian();
+    const int ncart4 = shell4.ncartesian();
+    const int n1 = shell1.nfunction();
+    const int n2 = shell2.nfunction();
+    const int n3 = shell3.nfunction();
+    const int n4 = shell4.nfunction();
+
+    const int ncart1234 = ncart1 * ncart2 * ncart3 * ncart4;
+    const int n1234 = n1 * n2 * n3 * n4;
+    curr_buff_size_ = n1234;
+
+    // Check that we have enough space now
+    size_t nshell1234 = P_.nshell12 * Q_.nshell12;
+
+    if(nshell1234 == 0)
+        throw PSIEXCEPTION("No shells passed to calculate");
+    if(nshell1234 > batchsize_)
+        throw PSIEXCEPTION("Not enough space allocated for that many shells\n");
+
+    // actually compute
+    // if we are doing cartesian, put directly in target. Otherwise, put in source
+    // and let pure_transform put it in target
+    size_t ncomputed = 0;
+
+
+    if(do_cart)
+        ncomputed = simint_compute_eri(&P_, &Q_, SIMINT_SCREEN_TOL, sharedwork_, target_);
+    else
+    {
+        ncomputed = simint_compute_eri(&P_, &Q_, SIMINT_SCREEN_TOL, sharedwork_, source_);
+        if(!do_cart)
+        {
+            for(const auto & sh12 : vsh12)
+            {
+                for(const auto & sh34 : vsh34)
+                {
+                    pure_transform(sh12.first, sh12.second,
+                                   sh34.first, sh34.second, 1, false);
+    
+                    source_ += ncart1234;
+                    target_ += n1234;
+                }
+            }
+        }
+    }
+}
+
 
 void SimintTwoElectronInt::create_blocks(void)
 {

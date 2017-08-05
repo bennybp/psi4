@@ -105,6 +105,9 @@ protected:
     //! Should we use shell pair information?
     bool use_shell_pairs_;
 
+    //! Size of integral batches
+    size_t batchsize_;
+
     //! Stack memory pointer, used in init_shell_pairs, freed in destructor
     double *stack12_, *stack34_;
 
